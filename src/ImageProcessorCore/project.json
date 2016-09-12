@@ -6,8 +6,17 @@
     "James Jackson-South and contributors"
   ],
   "packOptions": {
+    "owners": [
+      "James Jackson-South and contributors"
+    ],
     "projectUrl": "https://github.com/JimBobSquarePants/ImageProcessor",
     "licenseUrl": "http://www.apache.org/licenses/LICENSE-2.0",
+    "iconUrl": "https://raw.githubusercontent.com/JimBobSquarePants/ImageProcessor/Core/build/icons/imageprocessor-logo-128.png",
+    "requireLicenseAcceptance": false,
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/JimBobSquarePants/ImageProcessor"
+    },
     "tags": [
       "Image Resize Crop Quality Gif Jpg Jpeg Bitmap Png Fluent Animated"
     ]
@@ -17,16 +26,25 @@
     "debugType": "portable"
   },
   "dependencies": {
-    "NETStandard.Library": "1.5.0-rc2-24027",
-    "System.Numerics.Vectors": "4.1.1-rc2-24027"
+    "System.Collections": "4.0.11",
+    "System.Diagnostics.Debug": "4.0.11",
+    "System.Diagnostics.Tools": "4.0.1",
+    "System.IO": "4.1.0",
+    "System.IO.Compression": "4.1.0",
+    "System.Linq": "4.1.0",
+    "System.Numerics.Vectors": "4.1.1",
+    "System.ObjectModel": "4.0.12",
+    "System.Resources.ResourceManager": "4.0.1",
+    "System.Runtime.CompilerServices.Unsafe": "4.0.0",
+    "System.Runtime.Extensions": "4.1.0",
+    "System.Runtime.InteropServices": "4.1.0",
+    "System.Runtime.Numerics": "4.0.1",
+    "System.Text.Encoding.Extensions": "4.0.11",
+    "System.Threading": "4.0.11",
+    "System.Threading.Tasks": "4.0.11",
+    "System.Threading.Tasks.Parallel": "4.0.1"
   },
   "frameworks": {
-    "netstandard1.1": {
-      "dependencies": {
-        "System.Threading": "4.0.11-rc2-24027",
-        "System.Threading.Tasks": "4.0.11-rc2-24027",
-        "System.Threading.Tasks.Parallel": "4.0.1-rc2-24027"
-      }
-    }
+    "netstandard1.1": {}
   }
 }

@@ -6,10 +6,11 @@
 namespace ImageProcessorCore.Formats
 {
     using System;
+    using System.Collections.Generic;
     using System.IO;
     using System.Threading.Tasks;
 
-    using ImageProcessorCore.Quantizers;
+    using Quantizers;
 
     /// <summary>
     /// Performs the png encoding operation.
@@ -23,19 +24,39 @@ namespace ImageProcessorCore.Formats
         private const int MaxBlockSize = 65535;
 
         /// <summary>
+        /// Contains the raw pixel data from the image.
+        /// </summary>
+        byte[] pixelData;
+
+        /// <summary>
+        /// The image width.
+        /// </summary>
+        private int width;
+
+        /// <summary>
+        /// The image height.
+        /// </summary>
+        private int height;
+
+        /// <summary>
         /// The number of bits required to encode the colors in the png.
         /// </summary>
         private byte bitDepth;
 
         /// <summary>
-        /// The quantized image result.
+        /// The number of bytes per pixel.
         /// </summary>
-        private QuantizedImage quantized;
+        private int bytesPerPixel;
 
         /// <summary>
         /// Gets or sets the quality of output for images.
         /// </summary>
         public int Quality { get; set; }
+
+        /// <summary>
+        /// Gets or sets the png color type
+        /// </summary>
+        public PngColorType PngColorType { get; set; }
 
         /// <summary>
         /// The compression level 1-9. 
@@ -67,11 +88,22 @@ namespace ImageProcessorCore.Formats
         /// </summary>
         public byte Threshold { get; set; } = 128;
 
-        /// <inheritdoc/>
-        public void Encode(ImageBase image, Stream stream)
+        /// <summary>
+        /// Encodes the image to the specified stream from the <see cref="ImageBase{TColor, TPacked}"/>.
+        /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="image">The <see cref="ImageBase{TColor, TPacked}"/> to encode from.</param>
+        /// <param name="stream">The <see cref="Stream"/> to encode the image data to.</param>
+        public void Encode<TColor, TPacked>(ImageBase<TColor, TPacked> image, Stream stream)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
             Guard.NotNull(image, nameof(image));
             Guard.NotNull(stream, nameof(stream));
+
+            this.width = image.Width;
+            this.height = image.Height;
 
             // Write the png header.
             stream.Write(
@@ -93,6 +125,13 @@ namespace ImageProcessorCore.Formats
             int quality = this.Quality > 0 ? this.Quality : image.Quality;
             this.Quality = quality > 0 ? quality.Clamp(1, int.MaxValue) : int.MaxValue;
 
+            // Set correct color type if the color count is 256 or less.
+            if (this.Quality <= 256)
+            {
+                this.PngColorType = PngColorType.Palette;
+            }
+
+            // Set correct bit depth.
             this.bitDepth = this.Quality <= 256
                                ? (byte)(ImageMaths.GetBitsNeededForColorDepth(this.Quality).Clamp(1, 8))
                                : (byte)8;
@@ -107,12 +146,13 @@ namespace ImageProcessorCore.Formats
                 this.bitDepth = 8;
             }
 
-            // TODO: Add more color options here.
+            this.bytesPerPixel = CalculateBytesPerPixel();
+
             PngHeader header = new PngHeader
             {
                 Width = image.Width,
                 Height = image.Height,
-                ColorType = (byte)(this.Quality <= 256 ? 3 : 6), // 3 = indexed, 6= Each pixel is an R,G,B triple, followed by an alpha sample.
+                ColorType = (byte)this.PngColorType,
                 BitDepth = this.bitDepth,
                 FilterMethod = 0, // None
                 CompressionMethod = 0,
@@ -120,12 +160,254 @@ namespace ImageProcessorCore.Formats
             };
 
             this.WriteHeaderChunk(stream, header);
-            this.WritePaletteChunk(stream, header, image);
+
+            // Collect the pixel data
+            if (this.PngColorType == PngColorType.Palette)
+            {
+                this.CollectIndexedBytes(image, stream, header);
+            }
+            else if (this.PngColorType == PngColorType.Grayscale || this.PngColorType == PngColorType.GrayscaleWithAlpha)
+            {
+                this.CollectGrayscaleBytes(image);
+            }
+            else
+            {
+                this.CollectColorBytes(image);
+            }
+
             this.WritePhysicalChunk(stream, image);
             this.WriteGammaChunk(stream);
-            this.WriteDataChunks(stream, image);
+            this.WriteDataChunks(stream);
             this.WriteEndChunk(stream);
             stream.Flush();
+        }
+
+        /// <summary>
+        /// Collects the indexed pixel data.
+        /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="image">The image to encode.</param>
+        /// <param name="stream">The <see cref="Stream"/> containing image data.</param>
+        /// <param name="header">The <see cref="PngHeader"/>.</param>
+        private void CollectIndexedBytes<TColor, TPacked>(ImageBase<TColor, TPacked> image, Stream stream, PngHeader header)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
+        {
+            // Quatize the image and get the pixels
+            QuantizedImage<TColor, TPacked> quantized = this.WritePaletteChunk(stream, header, image);
+            pixelData = quantized.Pixels;
+        }
+
+        /// <summary>
+        /// Collects the grayscale pixel data.
+        /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="image">The image to encode.</param>
+        private void CollectGrayscaleBytes<TColor, TPacked>(ImageBase<TColor, TPacked> image)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
+        {
+            // Copy the pixels across from the image.
+            this.pixelData = new byte[this.width * this.height * this.bytesPerPixel];
+            int stride = this.width * this.bytesPerPixel;
+            using (PixelAccessor<TColor, TPacked> pixels = image.Lock())
+            {
+                Parallel.For(
+                   0,
+                   this.height,
+                   Bootstrapper.Instance.ParallelOptions,
+                   y =>
+                   {
+                       for (int x = 0; x < this.width; x++)
+                       {
+                           // Convert the color to YCbCr and store the luminance
+                           // Optionally store the original color alpha.
+                           int dataOffset = (y * stride) + (x * this.bytesPerPixel);
+                           Color source = new Color(pixels[x, y].ToVector4());
+                           YCbCr luminance = source;
+                           for (int i = 0; i < this.bytesPerPixel; i++)
+                           {
+                               if (i == 0)
+                               {
+                                   this.pixelData[dataOffset] = ((byte)luminance.Y).Clamp(0, 255);
+                               }
+                               else
+                               {
+                                   this.pixelData[dataOffset + i] = source.A;
+                               }
+                           }
+                       }
+                   });
+            }
+        }
+
+        /// <summary>
+        /// Collects the true color pixel data.
+        /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="image">The image to encode.</param>
+        private void CollectColorBytes<TColor, TPacked>(ImageBase<TColor, TPacked> image)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
+        {
+            // Copy the pixels across from the image.
+            this.pixelData = new byte[this.width * this.height * this.bytesPerPixel];
+            int stride = this.width * this.bytesPerPixel;
+            using (PixelAccessor<TColor, TPacked> pixels = image.Lock())
+            {
+                Parallel.For(
+                   0,
+                   this.height,
+                   Bootstrapper.Instance.ParallelOptions,
+                   y =>
+                   {
+                       for (int x = 0; x < this.width; x++)
+                       {
+                           int dataOffset = (y * stride) + (x * this.bytesPerPixel);
+                           Color source = new Color(pixels[x, y].ToVector4());
+
+                           this.pixelData[dataOffset] = source.R;
+                           this.pixelData[dataOffset + 1] = source.G;
+                           this.pixelData[dataOffset + 2] = source.B;
+                           if (this.bytesPerPixel == 4)
+                           {
+                               this.pixelData[dataOffset + 3] = source.A;
+                           }
+                       }
+                   });
+            }
+        }
+
+        /// <summary>
+        /// Encodes the pixel data line by line.
+        /// Each scanline is encoded in the most optimal manner to improve compression.
+        /// </summary>
+        /// <returns>The <see cref="T:byte[]"/></returns>
+        private byte[] EncodePixelData()
+        {
+            List<byte[]> filteredScanlines = new List<byte[]>();
+
+            byte[] previousScanline = new byte[width * this.bytesPerPixel];
+
+            for (int y = 0; y < height; y++)
+            {
+                byte[] rawScanline = GetRawScanline(y);
+                byte[] filteredScanline = GetOptimalFilteredScanline(rawScanline, previousScanline, this.bytesPerPixel);
+
+                filteredScanlines.Add(filteredScanline);
+
+                previousScanline = rawScanline;
+            }
+
+            List<byte> result = new List<byte>();
+
+            foreach (var encodedScanline in filteredScanlines)
+            {
+                result.AddRange(encodedScanline);
+            }
+
+            return result.ToArray();
+        }
+
+        /// <summary>
+        /// Applies all PNG filters to the given scanline and returns the filtered scanline that is deemed
+        /// to be most compressible, using lowest total variation as proxy for compressibility.
+        /// </summary>
+        /// <param name="rawScanline">The raw scanline</param>
+        /// <param name="previousScanline">The previous scanline</param>
+        /// <param name="byteCount">The number of bytes per pixel</param>
+        /// <returns></returns>
+        private byte[] GetOptimalFilteredScanline(byte[] rawScanline, byte[] previousScanline, int byteCount)
+        {
+            List<Tuple<byte[], int>> candidates = new List<Tuple<byte[], int>>();
+
+            byte[] sub = SubFilter.Encode(rawScanline, byteCount);
+            candidates.Add(new Tuple<byte[], int>(sub, CalculateTotalVariation(sub)));
+
+            byte[] up = UpFilter.Encode(rawScanline, previousScanline);
+            candidates.Add(new Tuple<byte[], int>(up, CalculateTotalVariation(up)));
+
+            byte[] average = AverageFilter.Encode(rawScanline, previousScanline, byteCount);
+            candidates.Add(new Tuple<byte[], int>(average, CalculateTotalVariation(average)));
+
+            byte[] paeth = PaethFilter.Encode(rawScanline, previousScanline, byteCount);
+            candidates.Add(new Tuple<byte[], int>(paeth, CalculateTotalVariation(paeth)));
+
+            int lowestTotalVariation = int.MaxValue;
+            int lowestTotalVariationIndex = 0;
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (candidates[i].Item2 < lowestTotalVariation)
+                {
+                    lowestTotalVariationIndex = i;
+                    lowestTotalVariation = candidates[i].Item2;
+                }
+            }
+
+            return candidates[lowestTotalVariationIndex].Item1;
+        }
+
+        /// <summary>
+        /// Calculates the total variation of given byte array. Total variation is the sum of the absolute values of
+        /// neighbour differences.
+        /// </summary>
+        /// <param name="input">The scanline bytes</param>
+        /// <returns>The <see cref="int"/></returns>
+        private int CalculateTotalVariation(byte[] input)
+        {
+            int totalVariation = 0;
+
+            for (int i = 1; i < input.Length; i++)
+            {
+                totalVariation += Math.Abs(input[i] - input[i - 1]);
+            }
+
+            return totalVariation;
+        }
+
+        /// <summary>
+        /// Get the raw scanline data from the pixel data
+        /// </summary>
+        /// <param name="y">The row number</param>
+        /// <returns>The <see cref="T:byte[]"/></returns>
+        private byte[] GetRawScanline(int y)
+        {
+            int stride = this.bytesPerPixel * this.width;
+            byte[] rawScanline = new byte[stride];
+            Array.Copy(this.pixelData, y * stride, rawScanline, 0, stride);
+            return rawScanline;
+        }
+
+        /// <summary>
+        /// Calculates the correct number of bytes per pixel for the given color type.
+        /// </summary>
+        /// <returns>The <see cref="int"/></returns>
+        private int CalculateBytesPerPixel()
+        {
+            switch (this.PngColorType)
+            {
+                case PngColorType.Grayscale:
+                    return 1;
+
+                case PngColorType.GrayscaleWithAlpha:
+                    return 2;
+
+                case PngColorType.Palette:
+                    return 1;
+
+                case PngColorType.Rgb:
+                    return 3;
+
+                // PngColorType.RgbWithAlpha
+                // TODO: Maybe figure out a way to detect if there are any transparent
+                // pixels and encode RGB if none.
+                default:
+                    return 4;
+            }
         }
 
         /// <summary>
@@ -194,38 +476,44 @@ namespace ImageProcessorCore.Formats
         /// <summary>
         /// Writes the palette chunk to the stream.
         /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
         /// <param name="stream">The <see cref="Stream"/> containing image data.</param>
         /// <param name="header">The <see cref="PngHeader"/>.</param>
         /// <param name="image">The image to encode.</param>
-        private void WritePaletteChunk(Stream stream, PngHeader header, ImageBase image)
+        private QuantizedImage<TColor, TPacked> WritePaletteChunk<TColor, TPacked>(Stream stream, PngHeader header, ImageBase<TColor, TPacked> image)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
             if (this.Quality > 256)
             {
-                return;
+                return null;
             }
 
             if (this.Quantizer == null)
             {
-                this.Quantizer = new WuQuantizer { Threshold = this.Threshold };
+                this.Quantizer = new WuQuantizer<TColor, TPacked> { Threshold = this.Threshold };
             }
 
-            // Quantize the image returning a palette.
-            this.quantized = this.Quantizer.Quantize(image, this.Quality);
+            // Quantize the image returning a palette. This boxing is icky.
+            QuantizedImage<TColor, TPacked> quantized = ((IQuantizer<TColor, TPacked>)this.Quantizer).Quantize(image, this.Quality);
 
             // Grab the palette and write it to the stream.
-            Bgra32[] palette = this.quantized.Palette;
+            TColor[] palette = quantized.Palette;
             int pixelCount = palette.Length;
 
             // Get max colors for bit depth.
             int colorTableLength = (int)Math.Pow(2, header.BitDepth) * 3;
             byte[] colorTable = new byte[colorTableLength];
 
-            Parallel.For(0, pixelCount,
+            Parallel.For(
+                0,
+                pixelCount,
+                Bootstrapper.Instance.ParallelOptions,
                 i =>
                 {
                     int offset = i * 3;
-                    Bgra32 color = palette[i];
-
+                    Color color = new Color(palette[i].ToVector4());
                     colorTable[offset] = color.R;
                     colorTable[offset + 1] = color.G;
                     colorTable[offset + 2] = color.B;
@@ -234,25 +522,31 @@ namespace ImageProcessorCore.Formats
             this.WriteChunk(stream, PngChunkTypes.Palette, colorTable);
 
             // Write the transparency data
-            if (this.quantized.TransparentIndex > -1)
+            if (quantized.TransparentIndex > -1)
             {
-                this.WriteChunk(stream, PngChunkTypes.PaletteAlpha, new[] { (byte)this.quantized.TransparentIndex });
+                this.WriteChunk(stream, PngChunkTypes.PaletteAlpha, new[] { (byte)quantized.TransparentIndex });
             }
+
+            return quantized;
         }
 
         /// <summary>
         /// Writes the physical dimension information to the stream.
         /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
         /// <param name="stream">The <see cref="Stream"/> containing image data.</param>
         /// <param name="imageBase">The image base.</param>
-        private void WritePhysicalChunk(Stream stream, ImageBase imageBase)
+        private void WritePhysicalChunk<TColor, TPacked>(Stream stream, ImageBase<TColor, TPacked> imageBase)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
-            Image image = imageBase as Image;
+            Image<TColor, TPacked> image = imageBase as Image<TColor, TPacked>;
             if (image != null && image.HorizontalResolution > 0 && image.VerticalResolution > 0)
             {
                 // 39.3700787 = inches in a meter.
-                int dpmX = (int)Math.Round(image.HorizontalResolution * 39.3700787d);
-                int dpmY = (int)Math.Round(image.VerticalResolution * 39.3700787d);
+                int dpmX = (int)Math.Round(image.HorizontalResolution * 39.3700787D);
+                int dpmY = (int)Math.Round(image.VerticalResolution * 39.3700787D);
 
                 byte[] chunkData = new byte[9];
 
@@ -291,79 +585,9 @@ namespace ImageProcessorCore.Formats
         /// <summary>
         /// Writes the pixel information to the stream.
         /// </summary>
-        /// <param name="stream">The <see cref="Stream"/> containing image data.</param>
-        /// <param name="image">The image base.</param>
-        private void WriteDataChunks(Stream stream, ImageBase image)
+        private void WriteDataChunks(Stream stream)
         {
-            byte[] data;
-            int imageWidth = image.Width;
-            int imageHeight = image.Height;
-
-            // Indexed image.
-            if (this.Quality <= 256)
-            {
-                int rowLength = imageWidth + 1;
-                data = new byte[rowLength * imageHeight];
-
-                Parallel.For(0, imageHeight, y =>
-                {
-                    int dataOffset = (y * rowLength);
-                    byte compression = 0;
-                    if (y > 0)
-                    {
-                        compression = 2;
-                    }
-                    data[dataOffset++] = compression;
-                    for (int x = 0; x < imageWidth; x++)
-                    {
-                        data[dataOffset++] = this.quantized.Pixels[(y * imageWidth) + x];
-                        if (y > 0)
-                        {
-                            data[dataOffset - 1] -= this.quantized.Pixels[((y - 1) * imageWidth) + x];
-                        }
-                    }
-                });
-            }
-            else
-            {
-                // TrueColor image.
-                data = new byte[(imageWidth * imageHeight * 4) + image.Height];
-
-                int rowLength = (imageWidth * 4) + 1;
-
-                Parallel.For(0, imageHeight, y =>
-                {
-                    byte compression = 0;
-                    if (y > 0)
-                    {
-                        compression = 2;
-                    }
-
-                    data[y * rowLength] = compression;
-
-                    for (int x = 0; x < imageWidth; x++)
-                    {
-                        Bgra32 color = Color.ToNonPremultiplied(image[x, y]);
-
-                        // Calculate the offset for the new array.
-                        int dataOffset = (y * rowLength) + (x * 4) + 1;
-                        data[dataOffset] = color.R;
-                        data[dataOffset + 1] = color.G;
-                        data[dataOffset + 2] = color.B;
-                        data[dataOffset + 3] = color.A;
-
-                        if (y > 0)
-                        {
-                            color = Color.ToNonPremultiplied(image[x, y - 1]);
-
-                            data[dataOffset] -= color.R;
-                            data[dataOffset + 1] -= color.G;
-                            data[dataOffset + 2] -= color.B;
-                            data[dataOffset + 3] -= color.A;
-                        }
-                    }
-                });
-            }
+            byte[] data = this.EncodePixelData();
 
             byte[] buffer;
             int bufferLength;

@@ -49,16 +49,20 @@ namespace ImageProcessorCore.Formats
         /// Decodes the image from the specified this._stream and sets
         /// the data to image.
         /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
         /// <param name="image">The image, where the data should be set to.
         /// Cannot be null (Nothing in Visual Basic).</param>
-        /// <param name="stream">The this._stream, where the image should be
+        /// <param name="stream">The stream, where the image should be
         /// decoded from. Cannot be null (Nothing in Visual Basic).</param>
-        /// <exception cref="ArgumentNullException">
+        /// <exception cref="System.ArgumentNullException">
         ///    <para><paramref name="image"/> is null.</para>
         ///    <para>- or -</para>
         ///    <para><paramref name="stream"/> is null.</para>
         /// </exception>
-        public void Decode(Image image, Stream stream)
+        public void Decode<TColor, TPacked>(Image<TColor, TPacked> image, Stream stream)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
             this.currentStream = stream;
 
@@ -110,45 +114,38 @@ namespace ImageProcessorCore.Formats
                     this.currentStream.Read(palette, 0, colorMapSize);
                 }
 
-                if (this.infoHeader.Width > ImageBase.MaxWidth || this.infoHeader.Height > ImageBase.MaxHeight)
+                if (this.infoHeader.Width > image.MaxWidth || this.infoHeader.Height > image.MaxHeight)
                 {
                     throw new ArgumentOutOfRangeException(
                         $"The input bitmap '{this.infoHeader.Width}x{this.infoHeader.Height}' is "
-                        + $"bigger then the max allowed size '{ImageBase.MaxWidth}x{ImageBase.MaxHeight}'");
+                        + $"bigger then the max allowed size '{image.MaxWidth}x{image.MaxHeight}'");
                 }
 
-                float[] imageData = new float[this.infoHeader.Width * this.infoHeader.Height * 4];
+                TColor[] imageData = new TColor[this.infoHeader.Width * this.infoHeader.Height];
 
                 switch (this.infoHeader.Compression)
                 {
                     case BmpCompression.RGB:
                         if (this.infoHeader.HeaderSize != 40)
                         {
-                            throw new ImageFormatException(
-                                $"Header Size value '{this.infoHeader.HeaderSize}' is not valid.");
+                            throw new ImageFormatException($"Header Size value '{this.infoHeader.HeaderSize}' is not valid.");
                         }
 
                         if (this.infoHeader.BitsPerPixel == 32)
                         {
-                            this.ReadRgb32(imageData, this.infoHeader.Width, this.infoHeader.Height, inverted);
+                            this.ReadRgb32<TColor, TPacked>(imageData, this.infoHeader.Width, this.infoHeader.Height, inverted);
                         }
                         else if (this.infoHeader.BitsPerPixel == 24)
                         {
-                            this.ReadRgb24(imageData, this.infoHeader.Width, this.infoHeader.Height, inverted);
+                            this.ReadRgb24<TColor, TPacked>(imageData, this.infoHeader.Width, this.infoHeader.Height, inverted);
                         }
                         else if (this.infoHeader.BitsPerPixel == 16)
                         {
-                            this.ReadRgb16(imageData, this.infoHeader.Width, this.infoHeader.Height, inverted);
+                            this.ReadRgb16<TColor, TPacked>(imageData, this.infoHeader.Width, this.infoHeader.Height, inverted);
                         }
                         else if (this.infoHeader.BitsPerPixel <= 8)
                         {
-                            this.ReadRgbPalette(
-                                imageData,
-                                palette,
-                                this.infoHeader.Width,
-                                this.infoHeader.Height,
-                                this.infoHeader.BitsPerPixel,
-                                inverted);
+                            this.ReadRgbPalette<TColor, TPacked>(imageData, palette, this.infoHeader.Width, this.infoHeader.Height, this.infoHeader.BitsPerPixel, inverted);
                         }
 
                         break;
@@ -169,6 +166,7 @@ namespace ImageProcessorCore.Formats
         /// </summary>
         /// <param name="y">The y- value representing the current row.</param>
         /// <param name="height">The height of the bitmap.</param>
+        /// <param name="inverted">Whether the bitmap is inverted.</param>
         /// <returns>The <see cref="int"/> representing the inverted value.</returns>
         private static int Invert(int y, int height, bool inverted)
         {
@@ -189,12 +187,17 @@ namespace ImageProcessorCore.Formats
         /// <summary>
         /// Reads the color palette from the stream.
         /// </summary>
-        /// <param name="imageData">The <see cref="T:float[]"/> image data to assign the palette to.</param>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="imageData">The <see cref="T:T[]"/> image data to assign the palette to.</param>
         /// <param name="colors">The <see cref="T:byte[]"/> containing the colors.</param>
         /// <param name="width">The width of the bitmap.</param>
         /// <param name="height">The height of the bitmap.</param>
         /// <param name="bits">The number of bits per pixel.</param>
-        private void ReadRgbPalette(float[] imageData, byte[] colors, int width, int height, int bits, bool inverted)
+        /// <param name="inverted">Whether the bitmap is inverted.</param>
+        private void ReadRgbPalette<TColor, TPacked>(TColor[] imageData, byte[] colors, int width, int height, int bits, bool inverted)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
             // Pixels per byte (bits per pixel)
             int ppb = 8 / bits;
@@ -218,6 +221,7 @@ namespace ImageProcessorCore.Formats
             Parallel.For(
                 0,
                 height,
+                Bootstrapper.Instance.ParallelOptions,
                 y =>
                     {
                         int rowOffset = y * (arrayWidth + alignment);
@@ -234,14 +238,12 @@ namespace ImageProcessorCore.Formats
                             for (int shift = 0; shift < ppb && (colOffset + shift) < width; shift++)
                             {
                                 int colorIndex = ((data[offset] >> (8 - bits - (shift * bits))) & mask) * 4;
-                                int arrayOffset = ((row * width) + (colOffset + shift)) * 4;
+                                int arrayOffset = (row * width) + (colOffset + shift);
 
-                                // We divide by 255 as we will store the colors in our floating point format.
-                                // Stored in r-> g-> b-> a order.
-                                imageData[arrayOffset] = colors[colorIndex + 2] / 255f; // r
-                                imageData[arrayOffset + 1] = colors[colorIndex + 1] / 255f; // g
-                                imageData[arrayOffset + 2] = colors[colorIndex] / 255f; // b
-                                imageData[arrayOffset + 3] = 1; // a
+                                // Stored in b-> g-> r order.
+                                TColor packed = default(TColor);
+                                packed.PackFromVector4(new Color(colors[colorIndex + 2], colors[colorIndex + 1], colors[colorIndex]).ToVector4());
+                                imageData[arrayOffset] = packed;
                             }
                         }
                     });
@@ -250,14 +252,19 @@ namespace ImageProcessorCore.Formats
         /// <summary>
         /// Reads the 16 bit color palette from the stream
         /// </summary>
-        /// <param name="imageData">The <see cref="T:float[]"/> image data to assign the palette to.</param>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="imageData">The <see cref="T:T[]"/> image data to assign the palette to.</param>
         /// <param name="width">The width of the bitmap.</param>
         /// <param name="height">The height of the bitmap.</param>
-        private void ReadRgb16(float[] imageData, int width, int height, bool inverted)
+        /// <param name="inverted">Whether the bitmap is inverted.</param>
+        private void ReadRgb16<TColor, TPacked>(TColor[] imageData, int width, int height, bool inverted)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
             // We divide here as we will store the colors in our floating point format.
-            const float ScaleR = 0.25F; // (256 / 32) / 32
-            const float ScaleG = 0.0625F; // (256 / 64) / 64
+            const int ScaleR = 8; // 256/32
+            const int ScaleG = 4; // 256/64
 
             int alignment;
             byte[] data = this.GetImageArray(width, height, 2, out alignment);
@@ -265,6 +272,7 @@ namespace ImageProcessorCore.Formats
             Parallel.For(
                 0,
                 height,
+                Bootstrapper.Instance.ParallelOptions,
                 y =>
                     {
                         int rowOffset = y * ((width * 2) + alignment);
@@ -278,17 +286,16 @@ namespace ImageProcessorCore.Formats
 
                             short temp = BitConverter.ToInt16(data, offset);
 
-                            float r = ((temp & Rgb16RMask) >> 11) * ScaleR;
-                            float g = ((temp & Rgb16GMask) >> 5) * ScaleG;
-                            float b = (temp & Rgb16BMask) * ScaleR;
+                            byte r = (byte)(((temp & Rgb16RMask) >> 11) * ScaleR);
+                            byte g = (byte)(((temp & Rgb16GMask) >> 5) * ScaleG);
+                            byte b = (byte)((temp & Rgb16BMask) * ScaleR);
 
-                            int arrayOffset = ((row * width) + x) * 4;
+                            int arrayOffset = ((row * width) + x);
 
-                            // Stored in r-> g-> b-> a order.
-                            imageData[arrayOffset] = r;
-                            imageData[arrayOffset + 1] = g;
-                            imageData[arrayOffset + 2] = b;
-                            imageData[arrayOffset + 3] = 1;
+                            // Stored in b-> g-> r order.
+                            TColor packed = default(TColor);
+                            packed.PackFromVector4(new Color(r, g, b).ToVector4());
+                            imageData[arrayOffset] = packed;
                         }
                     });
         }
@@ -296,10 +303,15 @@ namespace ImageProcessorCore.Formats
         /// <summary>
         /// Reads the 24 bit color palette from the stream
         /// </summary>
-        /// <param name="imageData">The <see cref="T:float[]"/> image data to assign the palette to.</param>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="imageData">The <see cref="T:T[]"/> image data to assign the palette to.</param>
         /// <param name="width">The width of the bitmap.</param>
         /// <param name="height">The height of the bitmap.</param>
-        private void ReadRgb24(float[] imageData, int width, int height, bool inverted)
+        /// <param name="inverted">Whether the bitmap is inverted.</param>
+        private void ReadRgb24<TColor, TPacked>(TColor[] imageData, int width, int height, bool inverted)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
             int alignment;
             byte[] data = this.GetImageArray(width, height, 3, out alignment);
@@ -307,6 +319,7 @@ namespace ImageProcessorCore.Formats
             Parallel.For(
                 0,
                 height,
+                Bootstrapper.Instance.ParallelOptions,
                 y =>
                     {
                         int rowOffset = y * ((width * 3) + alignment);
@@ -317,14 +330,12 @@ namespace ImageProcessorCore.Formats
                         for (int x = 0; x < width; x++)
                         {
                             int offset = rowOffset + (x * 3);
-                            int arrayOffset = ((row * width) + x) * 4;
+                            int arrayOffset = ((row * width) + x);
 
-                            // We divide by 255 as we will store the colors in our floating point format.
-                            // Stored in r-> g-> b-> a order.
-                            imageData[arrayOffset] = data[offset + 2] / 255f;
-                            imageData[arrayOffset + 1] = data[offset + 1] / 255f;
-                            imageData[arrayOffset + 2] = data[offset] / 255f;
-                            imageData[arrayOffset + 3] = 1;
+                            // Stored in b-> g-> r-> a order.
+                            TColor packed = default(TColor);
+                            packed.PackFromVector4(new Color(data[offset + 2], data[offset + 1], data[offset]).ToVector4());
+                            imageData[arrayOffset] = packed;
                         }
                     });
         }
@@ -332,10 +343,15 @@ namespace ImageProcessorCore.Formats
         /// <summary>
         /// Reads the 32 bit color palette from the stream
         /// </summary>
-        /// <param name="imageData">The <see cref="T:float[]"/> image data to assign the palette to.</param>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="imageData">The <see cref="T:T[]"/> image data to assign the palette to.</param>
         /// <param name="width">The width of the bitmap.</param>
         /// <param name="height">The height of the bitmap.</param>
-        private void ReadRgb32(float[] imageData, int width, int height, bool inverted)
+        /// <param name="inverted">Whether the bitmap is inverted.</param>
+        private void ReadRgb32<TColor, TPacked>(TColor[] imageData, int width, int height, bool inverted)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
             int alignment;
             byte[] data = this.GetImageArray(width, height, 4, out alignment);
@@ -343,6 +359,7 @@ namespace ImageProcessorCore.Formats
             Parallel.For(
                 0,
                 height,
+                Bootstrapper.Instance.ParallelOptions,
                 y =>
                     {
                         int rowOffset = y * ((width * 4) + alignment);
@@ -353,14 +370,12 @@ namespace ImageProcessorCore.Formats
                         for (int x = 0; x < width; x++)
                         {
                             int offset = rowOffset + (x * 4);
-                            int arrayOffset = ((row * width) + x) * 4;
+                            int arrayOffset = ((row * width) + x);
 
-                            // We divide by 255 as we will store the colors in our floating point format.
-                            // Stored in r-> g-> b-> a order.
-                            imageData[arrayOffset] = data[offset + 2] / 255f;
-                            imageData[arrayOffset + 1] = data[offset + 1] / 255f;
-                            imageData[arrayOffset + 2] = data[offset] / 255f;
-                            imageData[arrayOffset + 3] = 1; // TODO: Can we use our real alpha here?
+                            // Stored in b-> g-> r-> a order.
+                            TColor packed = default(TColor);
+                            packed.PackFromVector4(new Color(data[offset + 2], data[offset + 1], data[offset], data[offset + 3]).ToVector4());
+                            imageData[arrayOffset] = packed;
                         }
                     });
         }

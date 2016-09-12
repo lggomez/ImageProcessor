@@ -43,7 +43,9 @@ namespace ImageProcessorCore.Formats
         }
 
         /// <inheritdoc/>
-        public void Encode(ImageBase image, Stream stream)
+        public void Encode<TColor, TPacked>(Image<TColor, TPacked> image, Stream stream)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
             BmpEncoderCore encoder = new BmpEncoderCore();
             encoder.Encode(image, stream, this.BitsPerPixel);

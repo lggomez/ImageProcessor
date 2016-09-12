@@ -4,17 +4,15 @@
     using System.Drawing.Drawing2D;
 
     using BenchmarkDotNet.Attributes;
-
-    using ImageProcessorCore.Samplers;
-    using CoreImage = ImageProcessorCore.Image;
     using CoreSize = ImageProcessorCore.Size;
+    using CoreImage = ImageProcessorCore.Image;
 
     public class Crop
     {
         [Benchmark(Baseline = true, Description = "System.Drawing Crop")]
         public Size CropSystemDrawing()
         {
-            using (Bitmap source = new Bitmap(400, 400))
+            using (Bitmap source = new Bitmap(800, 800))
             {
                 using (Bitmap destination = new Bitmap(100, 100))
                 {
@@ -34,11 +32,9 @@
         [Benchmark(Description = "ImageProcessorCore Crop")]
         public CoreSize CropResizeCore()
         {
-            using (CoreImage image = new CoreImage(400, 400))
-            {
-                image.Crop(100, 100);
-                return new CoreSize(image.Width, image.Height);
-            }
+            CoreImage image = new CoreImage(800, 800);
+            image.Crop(100, 100);
+            return new CoreSize(image.Width, image.Height);
         }
     }
 }

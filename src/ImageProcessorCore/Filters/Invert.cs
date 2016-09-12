@@ -3,41 +3,56 @@
 // Licensed under the Apache License, Version 2.0.
 // </copyright>
 
-namespace ImageProcessorCore.Filters
+namespace ImageProcessorCore
 {
-    using System.Numerics;
-    using System.Threading.Tasks;
+    using Processors;
 
     /// <summary>
-    /// An <see cref="IImageProcessor"/> to invert the colors of an <see cref="Image"/>.
+    /// Extension methods for the <see cref="Image{TColor, TPacked}"/> type.
     /// </summary>
-    public class Invert : ParallelImageProcessor
+    public static partial class ImageExtensions
     {
-        /// <inheritdoc/>
-        protected override void Apply(ImageBase target, ImageBase source, Rectangle targetRectangle, Rectangle sourceRectangle, int startY, int endY)
+        /// <summary>
+        /// Inverts the colors of the image.
+        /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="source">The image this method extends.</param>
+        /// <param name="progressHandler">A delegate which is called as progress is made processing the image.</param>
+        /// <returns>The <see cref="Image"/>.</returns>
+        public static Image<TColor, TPacked> Invert<TColor, TPacked>(this Image<TColor, TPacked> source, ProgressEventHandler progressHandler = null)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
-            int sourceY = sourceRectangle.Y;
-            int sourceBottom = sourceRectangle.Bottom;
-            int startX = sourceRectangle.X;
-            int endX = sourceRectangle.Right;
-            Vector3 inverseVector = Vector3.One;
+            return Invert(source, source.Bounds, progressHandler);
+        }
 
-            Parallel.For(
-                startY,
-                endY,
-                y =>
-                    {
-                        if (y >= sourceY && y < sourceBottom)
-                        {
-                            for (int x = startX; x < endX; x++)
-                            {
-                                Color color = source[x, y];
-                                Vector3 vector = inverseVector - color.ToVector3();
-                                target[x, y] = new Color(vector, color.A);
-                            }
-                            this.OnRowProcessed();
-                        }
-                    });
+        /// <summary>
+        /// Inverts the colors of the image.
+        /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="source">The image this method extends.</param>
+        /// <param name="rectangle">
+        /// The <see cref="Rectangle"/> structure that specifies the portion of the image object to alter.
+        /// </param>
+        /// <param name="progressHandler">A delegate which is called as progress is made processing the image.</param>
+        /// <returns>The <see cref="Image"/>.</returns>
+        public static Image<TColor, TPacked> Invert<TColor, TPacked>(this Image<TColor, TPacked> source, Rectangle rectangle, ProgressEventHandler progressHandler = null)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
+        {
+            InvertProcessor<TColor, TPacked> processor = new InvertProcessor<TColor, TPacked>();
+            processor.OnProgress += progressHandler;
+
+            try
+            {
+                return source.Process(rectangle, processor);
+            }
+            finally
+            {
+                processor.OnProgress -= progressHandler;
+            }
         }
     }
 }

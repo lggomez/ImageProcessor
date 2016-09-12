@@ -20,6 +20,11 @@ namespace ImageProcessorCore.Formats
         /// </summary>
         public int Quality { get; set; }
 
+        /// <summary>
+        /// Gets or sets the png color type
+        /// </summary>
+        public PngColorType PngColorType { get; set; } = PngColorType.RgbWithAlpha;
+
         /// <inheritdoc/>
         public string MimeType => "image/png";
 
@@ -67,13 +72,16 @@ namespace ImageProcessorCore.Formats
         }
 
         /// <inheritdoc/>
-        public void Encode(ImageBase image, Stream stream)
+        public void Encode<TColor, TPacked>(Image<TColor, TPacked> image, Stream stream)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
             PngEncoderCore encoder = new PngEncoderCore
             {
                 CompressionLevel = this.CompressionLevel,
                 Gamma = this.Gamma,
                 Quality = this.Quality,
+                PngColorType = PngColorType,
                 Quantizer = this.Quantizer,
                 WriteGamma = this.WriteGamma,
                 Threshold = this.Threshold

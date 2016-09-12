@@ -1,7 +1,9 @@
 ﻿// <copyright file="WuQuantizer.cs" company="James Jackson-South">
-// Copyright (c) James Jackson-South and contributors.
+// Copyright © James Jackson-South and contributors.
 // Licensed under the Apache License, Version 2.0.
 // </copyright>
+
+using System.Numerics;
 
 namespace ImageProcessorCore.Quantizers
 {
@@ -30,7 +32,11 @@ namespace ImageProcessorCore.Quantizers
     /// but more expensive versions.
     /// </para>
     /// </remarks>
-    public sealed class WuQuantizer : IQuantizer
+    /// <typeparam name="TColor">The pixel format.</typeparam>
+    /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+    public sealed class WuQuantizer<TColor, TPacked> : IQuantizer<TColor, TPacked>
+        where TColor : IPackedVector<TPacked>
+        where TPacked : struct
     {
         /// <summary>
         /// The epsilon for comparing floating point numbers.
@@ -98,7 +104,7 @@ namespace ImageProcessorCore.Quantizers
         private readonly byte[] tag;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="WuQuantizer"/> class.
+        /// Initializes a new instance of the <see cref="WuQuantizer{T,TP}"/> class.
         /// </summary>
         public WuQuantizer()
         {
@@ -115,7 +121,7 @@ namespace ImageProcessorCore.Quantizers
         public byte Threshold { get; set; }
 
         /// <inheritdoc/>
-        public QuantizedImage Quantize(ImageBase image, int maxColors)
+        public QuantizedImage<TColor, TPacked> Quantize(ImageBase<TColor, TPacked> image, int maxColors)
         {
             Guard.NotNull(image, nameof(image));
 
@@ -123,13 +129,16 @@ namespace ImageProcessorCore.Quantizers
 
             this.Clear();
 
-            this.Build3DHistogram(image);
-            this.Get3DMoments();
+            using (PixelAccessor<TColor, TPacked> imagePixels = image.Lock())
+            {
+                this.Build3DHistogram(imagePixels);
+                this.Get3DMoments();
 
-            Box[] cube;
-            this.BuildCube(out cube, ref colorCount);
+                Box[] cube;
+                this.BuildCube(out cube, ref colorCount);
 
-            return this.GenerateResult(image, colorCount, cube);
+                return this.GenerateResult(imagePixels, colorCount, cube);
+            }
         }
 
         /// <summary>
@@ -317,14 +326,15 @@ namespace ImageProcessorCore.Quantizers
         /// <summary>
         /// Builds a 3-D color histogram of <c>counts, r/g/b, c^2</c>.
         /// </summary>
-        /// <param name="image">The image.</param>
-        private void Build3DHistogram(ImageBase image)
+        /// <param name="pixels">The pixel accessor.</param>
+        private void Build3DHistogram(PixelAccessor<TColor, TPacked> pixels)
         {
-            for (int y = 0; y < image.Height; y++)
+            for (int y = 0; y < pixels.Height; y++)
             {
-                for (int x = 0; x < image.Width; x++)
+                for (int x = 0; x < pixels.Width; x++)
                 {
-                    Bgra32 color = image[x, y];
+                    // Colors are expected in r->g->b->a format
+                   Color color = new Color(pixels[x, y].ToVector4());
 
                     byte r = color.R;
                     byte g = color.G;
@@ -711,15 +721,17 @@ namespace ImageProcessorCore.Quantizers
         /// <summary>
         /// Generates the quantized result.
         /// </summary>
-        /// <param name="image">The image.</param>
+        /// <param name="imagePixels">The image pixels.</param>
         /// <param name="colorCount">The color count.</param>
         /// <param name="cube">The cube.</param>
         /// <returns>The result.</returns>
-        private QuantizedImage GenerateResult(ImageBase image, int colorCount, Box[] cube)
+        private QuantizedImage<TColor, TPacked> GenerateResult(PixelAccessor<TColor, TPacked> imagePixels, int colorCount, Box[] cube)
         {
-            List<Bgra32> pallette = new List<Bgra32>();
-            byte[] pixels = new byte[image.Width * image.Height];
+            List<TColor> pallette = new List<TColor>();
+            byte[] pixels = new byte[imagePixels.Width * imagePixels.Height];
             int transparentIndex = -1;
+            int width = imagePixels.Width;
+            int height = imagePixels.Height;
 
             for (int k = 0; k < colorCount; k++)
             {
@@ -734,9 +746,10 @@ namespace ImageProcessorCore.Quantizers
                     byte b = (byte)(Volume(cube[k], this.vmb) / weight);
                     byte a = (byte)(Volume(cube[k], this.vma) / weight);
 
-                    Bgra32 color = new Bgra32(b, g, r, a);
+                    TColor color = default(TColor);
+                    color.PackFromVector4(new Vector4(r, g, b, a) / 255F);
 
-                    if (color == Bgra32.Empty)
+                    if (color.Equals(default(TColor)))
                     {
                         transparentIndex = k;
                     }
@@ -745,36 +758,38 @@ namespace ImageProcessorCore.Quantizers
                 }
                 else
                 {
-                    pallette.Add(Bgra32.Empty);
+                    pallette.Add(default(TColor));
                     transparentIndex = k;
                 }
             }
 
             Parallel.For(
                 0,
-                image.Height,
+                height,
+                Bootstrapper.Instance.ParallelOptions,
                 y =>
                     {
-                        for (int x = 0; x < image.Width; x++)
+                        for (int x = 0; x < width; x++)
                         {
-                            Bgra32 color = image[x, y];
-                            int a = color.A >> (8 - IndexAlphaBits);
+                            // Expected order r->g->b->a
+                            Color color = new Color(imagePixels[x, y].ToVector4());
                             int r = color.R >> (8 - IndexBits);
                             int g = color.G >> (8 - IndexBits);
                             int b = color.B >> (8 - IndexBits);
+                            int a = color.A >> (8 - IndexAlphaBits);
 
                             if (transparentIndex > -1 && color.A <= this.Threshold)
                             {
-                                pixels[(y * image.Width) + x] = (byte)transparentIndex;
+                                pixels[(y * width) + x] = (byte)transparentIndex;
                                 continue;
                             }
 
                             int ind = GetPaletteIndex(r + 1, g + 1, b + 1, a + 1);
-                            pixels[(y * image.Width) + x] = this.tag[ind];
+                            pixels[(y * width) + x] = this.tag[ind];
                         }
                     });
 
-            return new QuantizedImage(image.Width, image.Height, pallette.ToArray(), pixels, transparentIndex);
+            return new QuantizedImage<TColor, TPacked>(width, height, pallette.ToArray(), pixels, transparentIndex);
         }
     }
 }

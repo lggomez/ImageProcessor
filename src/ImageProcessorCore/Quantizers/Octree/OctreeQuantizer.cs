@@ -7,12 +7,17 @@ namespace ImageProcessorCore.Quantizers
 {
     using System;
     using System.Collections.Generic;
+    using System.Linq;
 
     /// <summary>
     /// Encapsulates methods to calculate the colour palette if an image using an Octree pattern.
     /// <see href="http://msdn.microsoft.com/en-us/library/aa479306.aspx"/>
     /// </summary>
-    public sealed class OctreeQuantizer : Quantizer
+    /// <typeparam name="TColor">The pixel format.</typeparam>
+    /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+    public sealed class OctreeQuantizer<TColor, TPacked> : Quantizer<TColor, TPacked>
+        where TColor : IPackedVector<TPacked>
+        where TPacked : struct
     {
         /// <summary>
         /// Stores the tree
@@ -25,7 +30,7 @@ namespace ImageProcessorCore.Quantizers
         private int colors;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="OctreeQuantizer"/> class.
+        /// Initializes a new instance of the <see cref="OctreeQuantizer{TColor, TPacked}"/> class.
         /// </summary>
         /// <remarks>
         /// The Octree quantizer is a two pass algorithm. The initial pass sets up the Octree,
@@ -37,7 +42,7 @@ namespace ImageProcessorCore.Quantizers
         }
 
         /// <inheritdoc/>
-        public override QuantizedImage Quantize(ImageBase image, int maxColors)
+        public override QuantizedImage<TColor, TPacked> Quantize(ImageBase<TColor, TPacked> image, int maxColors)
         {
             this.colors = maxColors.Clamp(1, 255);
 
@@ -60,7 +65,7 @@ namespace ImageProcessorCore.Quantizers
         /// This function need only be overridden if your quantize algorithm needs two passes,
         /// such as an Octree quantizer.
         /// </remarks>
-        protected override void InitialQuantizePixel(Bgra32 pixel)
+        protected override void InitialQuantizePixel(TColor pixel)
         {
             // Add the color to the Octree
             this.octree.AddColor(pixel);
@@ -69,19 +74,17 @@ namespace ImageProcessorCore.Quantizers
         /// <summary>
         /// Override this to process the pixel in the second pass of the algorithm
         /// </summary>
-        /// <param name="pixel">
-        /// The pixel to quantize
-        /// </param>
+        /// <param name="pixel">The pixel to quantize</param>
         /// <returns>
         /// The quantized value
         /// </returns>
-        protected override byte QuantizePixel(Bgra32 pixel)
+        protected override byte QuantizePixel(TColor pixel)
         {
             // The color at [maxColors] is set to transparent
             byte paletteIndex = (byte)this.colors;
 
             // Get the palette index if it's transparency meets criterea.
-            if (pixel.A > this.Threshold)
+            if (new Color(pixel.ToVector4()).A > this.Threshold)
             {
                 paletteIndex = (byte)this.octree.GetPaletteIndex(pixel);
             }
@@ -95,12 +98,16 @@ namespace ImageProcessorCore.Quantizers
         /// <returns>
         /// The new color palette
         /// </returns>
-        protected override List<Bgra32> GetPalette()
+        protected override List<TColor> GetPalette()
         {
             // First off convert the Octree to maxColors colors
-            List<Bgra32> palette = this.octree.Palletize(Math.Max(this.colors, 1));
+            List<TColor> palette = this.octree.Palletize(Math.Max(this.colors, 1));
 
-            palette.Add(Bgra32.Empty);
+            int diff = this.colors - palette.Count;
+            if (diff > 0)
+            {
+                palette.AddRange(Enumerable.Repeat(default(TColor), diff));
+            }
             this.TransparentIndex = this.colors;
 
             return palette;
@@ -152,7 +159,7 @@ namespace ImageProcessorCore.Quantizers
             /// <summary>
             /// Cache the previous color quantized
             /// </summary>
-            private int previousColor;
+            private TPacked previousColor;
 
             /// <summary>
             /// Initializes a new instance of the <see cref="Octree"/> class.
@@ -166,7 +173,7 @@ namespace ImageProcessorCore.Quantizers
                 this.Leaves = 0;
                 this.reducibleNodes = new OctreeNode[9];
                 this.root = new OctreeNode(0, this.maxColorBits, this);
-                this.previousColor = 0;
+                this.previousColor = default(TPacked);
                 this.previousNode = null;
             }
 
@@ -184,18 +191,19 @@ namespace ImageProcessorCore.Quantizers
             /// Add a given color value to the Octree
             /// </summary>
             /// <param name="pixel">
-            /// The <see cref="Bgra32"/>containing color information to add.
+            /// The <see cref="TColor"/>containing color information to add.
             /// </param>
-            public void AddColor(Bgra32 pixel)
+            public void AddColor(TColor pixel)
             {
+                TPacked packed = pixel.PackedValue;
                 // Check if this request is for the same color as the last
-                if (this.previousColor == pixel.Bgra)
+                if (this.previousColor.Equals(packed))
                 {
                     // If so, check if I have a previous node setup. This will only occur if the first color in the image
                     // happens to be black, with an alpha component of zero.
                     if (this.previousNode == null)
                     {
-                        this.previousColor = pixel.Bgra;
+                        this.previousColor = packed;
                         this.root.AddColor(pixel, this.maxColorBits, 0, this);
                     }
                     else
@@ -206,7 +214,7 @@ namespace ImageProcessorCore.Quantizers
                 }
                 else
                 {
-                    this.previousColor = pixel.Bgra;
+                    this.previousColor = packed;
                     this.root.AddColor(pixel, this.maxColorBits, 0, this);
                 }
             }
@@ -214,13 +222,11 @@ namespace ImageProcessorCore.Quantizers
             /// <summary>
             /// Convert the nodes in the Octree to a palette with a maximum of colorCount colors
             /// </summary>
-            /// <param name="colorCount">
-            /// The maximum number of colors
-            /// </param>
+            /// <param name="colorCount">The maximum number of colors</param>
             /// <returns>
-            /// An <see cref="List{Bgra}"/> with the palletized colors
+            /// An <see cref="List{TColor}"/> with the palletized colors
             /// </returns>
-            public List<Bgra32> Palletize(int colorCount)
+            public List<TColor> Palletize(int colorCount)
             {
                 while (this.Leaves > colorCount)
                 {
@@ -228,7 +234,7 @@ namespace ImageProcessorCore.Quantizers
                 }
 
                 // Now palletize the nodes
-                List<Bgra32> palette = new List<Bgra32>(this.Leaves);
+                List<TColor> palette = new List<TColor>(this.Leaves);
                 int paletteIndex = 0;
                 this.root.ConstructPalette(palette, ref paletteIndex);
 
@@ -239,13 +245,11 @@ namespace ImageProcessorCore.Quantizers
             /// <summary>
             /// Get the palette index for the passed color
             /// </summary>
-            /// <param name="pixel">
-            /// The <see cref="Bgra32"/> containing the pixel data.
-            /// </param>
+            /// <param name="pixel">The <see cref="TColor"/> containing the pixel data.</param>
             /// <returns>
             /// The index of the given structure.
             /// </returns>
-            public int GetPaletteIndex(Bgra32 pixel)
+            public int GetPaletteIndex(TColor pixel)
             {
                 return this.root.GetPaletteIndex(pixel, 0);
             }
@@ -369,19 +373,11 @@ namespace ImageProcessorCore.Quantizers
                 /// <summary>
                 /// Add a color into the tree
                 /// </summary>
-                /// <param name="pixel">
-                /// The color
-                /// </param>
-                /// <param name="colorBits">
-                /// The number of significant color bits
-                /// </param>
-                /// <param name="level">
-                /// The level in the tree
-                /// </param>
-                /// <param name="octree">
-                /// The tree to which this node belongs
-                /// </param>
-                public void AddColor(Bgra32 pixel, int colorBits, int level, Octree octree)
+                /// <param name="pixel">The color</param>
+                /// <param name="colorBits">The number of significant color bits</param>
+                /// <param name="level">The level in the tree</param>
+                /// <param name="octree">The tree to which this node belongs</param>
+                public void AddColor(TColor pixel, int colorBits, int level, Octree octree)
                 {
                     // Update the color information if this is a leaf
                     if (this.leaf)
@@ -395,9 +391,10 @@ namespace ImageProcessorCore.Quantizers
                     {
                         // Go to the next level down in the tree
                         int shift = 7 - level;
-                        int index = ((pixel.R & Mask[level]) >> (shift - 2)) |
-                                    ((pixel.G & Mask[level]) >> (shift - 1)) |
-                                    ((pixel.B & Mask[level]) >> shift);
+                        Color color = new Color(pixel.ToVector4());
+                        int index = ((color.B & Mask[level]) >> (shift - 2)) |
+                                    ((color.G & Mask[level]) >> (shift - 1)) |
+                                    ((color.R & Mask[level]) >> shift);
 
                         OctreeNode child = this.children[index];
 
@@ -446,13 +443,9 @@ namespace ImageProcessorCore.Quantizers
                 /// <summary>
                 /// Traverse the tree, building up the color palette
                 /// </summary>
-                /// <param name="palette">
-                /// The palette
-                /// </param>
-                /// <param name="index">
-                /// The current palette index
-                /// </param>
-                public void ConstructPalette(List<Bgra32> palette, ref int index)
+                /// <param name="palette">The palette</param>
+                /// <param name="index">The current palette index</param>
+                public void ConstructPalette(List<TColor> palette, ref int index)
                 {
                     if (this.leaf)
                     {
@@ -464,7 +457,9 @@ namespace ImageProcessorCore.Quantizers
                         byte b = (this.blue / this.pixelCount).ToByte();
 
                         // And set the color of the palette entry
-                        palette.Add(new Bgra32(b, g, r));
+                        TColor pixel = default(TColor);
+                        pixel.PackFromVector4(new Color(r, g, b).ToVector4());
+                        palette.Add(pixel);
                     }
                     else
                     {
@@ -482,25 +477,22 @@ namespace ImageProcessorCore.Quantizers
                 /// <summary>
                 /// Return the palette index for the passed color
                 /// </summary>
-                /// <param name="pixel">
-                /// The <see cref="Bgra32"/> representing the pixel.
-                /// </param>
-                /// <param name="level">
-                /// The level.
-                /// </param>
+                /// <param name="pixel">The <see cref="TColor"/> representing the pixel.</param>
+                /// <param name="level">The level.</param>
                 /// <returns>
                 /// The <see cref="int"/> representing the index of the pixel in the palette.
                 /// </returns>
-                public int GetPaletteIndex(Bgra32 pixel, int level)
+                public int GetPaletteIndex(TColor pixel, int level)
                 {
                     int index = this.paletteIndex;
 
                     if (!this.leaf)
                     {
                         int shift = 7 - level;
-                        int pixelIndex = ((pixel.R & Mask[level]) >> (shift - 2)) |
-                                         ((pixel.G & Mask[level]) >> (shift - 1)) |
-                                         ((pixel.B & Mask[level]) >> shift);
+                        Color color = new Color(pixel.ToVector4());
+                        int pixelIndex = ((color.B & Mask[level]) >> (shift - 2)) |
+                                         ((color.G & Mask[level]) >> (shift - 1)) |
+                                         ((color.R & Mask[level]) >> shift);
 
                         if (this.children[pixelIndex] != null)
                         {
@@ -508,7 +500,7 @@ namespace ImageProcessorCore.Quantizers
                         }
                         else
                         {
-                            throw new Exception("Didn't expect this!");
+                            throw new Exception($"Cannot retrive a pixel at the given index {pixelIndex}.");
                         }
                     }
 
@@ -521,12 +513,13 @@ namespace ImageProcessorCore.Quantizers
                 /// <param name="pixel">
                 /// The pixel to add.
                 /// </param>
-                public void Increment(Bgra32 pixel)
+                public void Increment(TColor pixel)
                 {
                     this.pixelCount++;
-                    this.red += pixel.R;
-                    this.green += pixel.G;
-                    this.blue += pixel.B;
+                    Color color = new Color(pixel.ToVector4());
+                    this.red += color.R;
+                    this.green += color.G;
+                    this.blue += color.B;
                 }
             }
         }

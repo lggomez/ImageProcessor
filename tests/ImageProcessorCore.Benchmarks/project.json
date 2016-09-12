@@ -10,25 +10,22 @@
     ]
   },
   "buildOptions": {
-    "emitEntryPoint": true
+    "emitEntryPoint": true,
+    "allowUnsafe": true
   },
   "dependencies": {
-    "BenchmarkDotNet": "0.9.7",
-    "BenchmarkDotNet.Diagnostics.Windows": "0.9.7",
+    "BenchmarkDotNet.Diagnostics.Windows": "0.9.9.116",
     "ImageProcessorCore": "1.0.0-*"
   },
   "commands": {
     "ImageProcessorCore.Benchmarks": "ImageProcessorCore.Benchmarks"
   },
   "frameworks": {
-    "net451": {
+    "net461": {
       "dependencies": {
       },
-      "imports": [
-        "dnx451"
-      ],
       "frameworkAssemblies": {
-        "System.Drawing": "4.0.0.0"
+        "System.Drawing": ""
       }
     }
   }

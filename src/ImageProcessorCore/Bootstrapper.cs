@@ -8,7 +8,9 @@ namespace ImageProcessorCore
     using System;
     using System.Collections.Generic;
     using System.Collections.ObjectModel;
-    using ImageProcessorCore.Formats;
+    using System.Threading.Tasks;
+
+    using Formats;
 
     /// <summary>
     /// Provides initialization code which allows extending the library.
@@ -31,13 +33,13 @@ namespace ImageProcessorCore
         /// </summary>
         private Bootstrapper()
         {
-            this.imageFormats = new List<IImageFormat>(new List<IImageFormat>
+            this.imageFormats = new List<IImageFormat>
             {
                 new BmpFormat(),
                 new JpegFormat(),
                 new PngFormat(),
                 new GifFormat()
-            });
+            };
         }
 
         /// <summary>
@@ -46,9 +48,15 @@ namespace ImageProcessorCore
         public static Bootstrapper Instance = Lazy.Value;
 
         /// <summary>
-        /// Gets the list of supported <see cref="IImageFormat"/>
+        /// Gets the collection of supported <see cref="IImageFormat"/>
         /// </summary>
         public IReadOnlyCollection<IImageFormat> ImageFormats => new ReadOnlyCollection<IImageFormat>(this.imageFormats);
+
+
+        /// <summary>
+        /// Gets or sets the global parallel options for processing tasks in parallel.
+        /// </summary>
+        public ParallelOptions ParallelOptions { get; set; } = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount };
 
         /// <summary>
         /// Adds a new <see cref="IImageFormat"/> to the collection of supported image formats.

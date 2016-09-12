@@ -1,12 +1,7 @@
-﻿// --------------------------------------------------------------------------------------------------------------------
-// <copyright file="GuardTests.cs" company="James Jackson-South">
-//   Copyright © James Jackson-South and contributors.
-//   Licensed under the Apache License, Version 2.0.
+﻿// <copyright file="GuardTests.cs" company="James Jackson-South">
+// Copyright (c) James Jackson-South and contributors.
+// Licensed under the Apache License, Version 2.0.
 // </copyright>
-// <summary>
-//   Tests the <see cref="Guard" /> helper.
-// </summary>
-// --------------------------------------------------------------------------------------------------------------------
 
 namespace ImageProcessorCore.Tests.Helpers
 {
@@ -203,6 +198,44 @@ namespace ImageProcessorCore.Tests.Helpers
         public void BetweenOrEqualToDoesNotThrowWhenArgIsBetween()
         {
             Exception ex = Record.Exception(() => Guard.MustBeBetweenOrEqualTo(0, -1, 1, "foo"));
+            Assert.Null(ex);
+        }
+
+        /// <summary>
+        /// Tests that the <see cref="M:Guard.IsTrue"/> method throws when the argument is false.
+        /// </summary>
+        [Fact]
+        public void IsTrueThrowsWhenArgIsFalse()
+        {
+            Assert.Throws<ArgumentException>(() => Guard.IsTrue(false, "foo", "message"));
+        }
+
+        /// <summary>
+        /// Tests that the <see cref="M:Guard.IsTrue"/> method does not throw when the argument is true.
+        /// </summary>
+        [Fact]
+        public void IsTrueDoesThrowsWhenArgIsTrue()
+        {
+            Exception ex = Record.Exception(() => Guard.IsTrue(true, "foo", "message"));
+            Assert.Null(ex);
+        }
+
+        /// <summary>
+        /// Tests that the <see cref="M:Guard.IsFalse"/> method throws when the argument is true.
+        /// </summary>
+        [Fact]
+        public void IsFalseThrowsWhenArgIsFalse()
+        {
+            Assert.Throws<ArgumentException>(() => Guard.IsFalse(true, "foo", "message"));
+        }
+
+        /// <summary>
+        /// Tests that the <see cref="M:Guard.IsFalse"/> method does not throw when the argument is false.
+        /// </summary>
+        [Fact]
+        public void IsFalseDoesThrowsWhenArgIsTrue()
+        {
+            Exception ex = Record.Exception(() => Guard.IsFalse(false, "foo", "message"));
             Assert.Null(ex);
         }
     }

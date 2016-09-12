@@ -3,57 +3,114 @@
 // Licensed under the Apache License, Version 2.0.
 // </copyright>
 
-namespace ImageProcessorCore.Filters
+namespace ImageProcessorCore
 {
-    using System;
-    using System.Numerics;
-    using System.Threading.Tasks;
+    using Processors;
 
     /// <summary>
-    /// Creates a glow effect on the image
+    /// Extension methods for the <see cref="Image{TColor, TPacked}"/> type.
     /// </summary>
-    public class Glow : ParallelImageProcessor
+    public static partial class ImageExtensions
     {
         /// <summary>
-        /// Gets or sets the vignette color to apply.
+        /// Applies a radial glow effect to an image.
         /// </summary>
-        public Color Color { get; set; } = Color.White;
-
-        /// <summary>
-        /// Gets or sets the the x-radius.
-        /// </summary>
-        public float RadiusX { get; set; }
-
-        /// <summary>
-        /// Gets or sets the the y-radius.
-        /// </summary>
-        public float RadiusY { get; set; }
-
-        /// <inheritdoc/>
-        protected override void Apply(ImageBase target, ImageBase source, Rectangle targetRectangle, Rectangle sourceRectangle, int startY, int endY)
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="source">The image this method extends.</param>
+        /// <param name="progressHandler">A delegate which is called as progress is made processing the image.</param>
+        /// <returns>The <see cref="Image{TColor, TPacked}"/>.</returns>
+        public static Image<TColor, TPacked> Glow<TColor, TPacked>(this Image<TColor, TPacked> source, ProgressEventHandler progressHandler = null)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
-            int startX = sourceRectangle.X;
-            int endX = sourceRectangle.Right;
-            Color glowColor = this.Color;
-            Vector2 centre = Rectangle.Center(targetRectangle).ToVector2();
-            float rX = this.RadiusX > 0 ? this.RadiusX : targetRectangle.Width / 2f;
-            float rY = this.RadiusY > 0 ? this.RadiusY : targetRectangle.Height / 2f;
-            float maxDistance = (float)Math.Sqrt(rX * rX + rY * rY);
+            return Glow(source, default(TColor), source.Bounds.Width * .5F, source.Bounds, progressHandler);
+        }
 
-            Parallel.For(
-                startY,
-                endY,
-                y =>
-                    {
-                        for (int x = startX; x < endX; x++)
-                        {
-                            float distance = Vector2.Distance(centre, new Vector2(x, y));
-                            Color sourceColor = target[x, y];
-                            target[x, y] = Color.Lerp(glowColor, sourceColor, .5f * (distance / maxDistance));
-                        }
-                        this.OnRowProcessed();
-                    });
+        /// <summary>
+        /// Applies a radial glow effect to an image.
+        /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="source">The image this method extends.</param>
+        /// <param name="color">The color to set as the glow.</param>
+        /// <param name="progressHandler">A delegate which is called as progress is made processing the image.</param>
+        /// <returns>The <see cref="Image{TColor, TPacked}"/>.</returns>
+        public static Image<TColor, TPacked> Glow<TColor, TPacked>(this Image<TColor, TPacked> source, TColor color, ProgressEventHandler progressHandler = null)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
+        {
+            return Glow(source, color, source.Bounds.Width * .5F, source.Bounds, progressHandler);
+        }
+
+        /// <summary>
+        /// Applies a radial glow effect to an image.
+        /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="source">The image this method extends.</param>
+        /// <param name="radius">The the radius.</param>
+        /// <param name="progressHandler">A delegate which is called as progress is made processing the image.</param>
+        /// <returns>The <see cref="Image{TColor, TPacked}"/>.</returns>
+        public static Image<TColor, TPacked> Glow<TColor, TPacked>(this Image<TColor, TPacked> source, float radius, ProgressEventHandler progressHandler = null)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
+        {
+            return Glow(source, default(TColor), radius, source.Bounds, progressHandler);
+        }
+
+        /// <summary>
+        /// Applies a radial glow effect to an image.
+        /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="source">The image this method extends.</param>
+        /// <param name="rectangle">
+        /// The <see cref="Rectangle"/> structure that specifies the portion of the image object to alter.
+        /// </param>
+        /// <param name="progressHandler">A delegate which is called as progress is made processing the image.</param>
+        /// <returns>The <see cref="Image{TColor, TPacked}"/>.</returns>
+        public static Image<TColor, TPacked> Glow<TColor, TPacked>(this Image<TColor, TPacked> source, Rectangle rectangle, ProgressEventHandler progressHandler = null)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
+        {
+            return Glow(source, default(TColor), 0, rectangle, progressHandler);
+        }
+
+        /// <summary>
+        /// Applies a radial glow effect to an image.
+        /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="source">The image this method extends.</param>
+        /// <param name="color">The color to set as the glow.</param>
+        /// <param name="radius">The the radius.</param>
+        /// <param name="rectangle">
+        /// The <see cref="Rectangle"/> structure that specifies the portion of the image object to alter.
+        /// </param>
+        /// <param name="progressHandler">A delegate which is called as progress is made processing the image.</param>
+        /// <returns>The <see cref="Image{TColor, TPacked}"/>.</returns>
+        public static Image<TColor, TPacked> Glow<TColor, TPacked>(this Image<TColor, TPacked> source, TColor color, float radius, Rectangle rectangle, ProgressEventHandler progressHandler = null)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
+        {
+            GlowProcessor<TColor, TPacked> processor = new GlowProcessor<TColor, TPacked> { Radius = radius, };
+
+            if (!color.Equals(default(TColor)))
+            {
+                processor.GlowColor = color;
+            }
+
+            processor.OnProgress += progressHandler;
+
+            try
+            {
+                return source.Process(rectangle, processor);
+            }
+            finally
+            {
+                processor.OnProgress -= progressHandler;
+            }
         }
     }
 }
-

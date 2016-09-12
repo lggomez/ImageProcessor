@@ -6,7 +6,6 @@
 namespace ImageProcessorCore
 {
     using System;
-    using System.Collections.Generic;
     using System.Linq;
     using System.Numerics;
 
@@ -62,25 +61,25 @@ namespace ImageProcessorCore
         {
             float temp;
 
-            if (x < 0)
+            if (x < 0F)
             {
                 x = -x;
             }
 
             temp = x * x;
-            if (x < 1)
+            if (x < 1F)
             {
                 x = ((12 - (9 * b) - (6 * c)) * (x * temp)) + ((-18 + (12 * b) + (6 * c)) * temp) + (6 - (2 * b));
-                return x / 6;
+                return x / 6F;
             }
 
-            if (x < 2)
+            if (x < 2F)
             {
                 x = ((-b - (6 * c)) * (x * temp)) + (((6 * b) + (30 * c)) * temp) + (((-12 * b) - (48 * c)) * x) + ((8 * b) + (24 * c));
-                return x / 6;
+                return x / 6F;
             }
 
-            return 0;
+            return 0F;
         }
 
         /// <summary>
@@ -92,7 +91,7 @@ namespace ImageProcessorCore
         /// </returns>
         public static float SinC(float x)
         {
-            const float Epsilon = .00001f;
+            const float Epsilon = .00001F;
 
             if (Math.Abs(x) > Epsilon)
             {
@@ -157,13 +156,17 @@ namespace ImageProcessorCore
         /// Finds the bounding rectangle based on the first instance of any color component other
         /// than the given one.
         /// </summary>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
         /// <param name="bitmap">The <see cref="Image"/> to search within.</param>
         /// <param name="componentValue">The color component value to remove.</param>
         /// <param name="channel">The <see cref="RgbaComponent"/> channel to test against.</param>
         /// <returns>
         /// The <see cref="Rectangle"/>.
         /// </returns>
-        public static Rectangle GetFilteredBoundingRectangle(ImageBase bitmap, float componentValue, RgbaComponent channel = RgbaComponent.B)
+        public static Rectangle GetFilteredBoundingRectangle<TColor, TPacked>(ImageBase<TColor, TPacked> bitmap, float componentValue, RgbaComponent channel = RgbaComponent.B)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct
         {
             const float Epsilon = .00001f;
             int width = bitmap.Width;
@@ -171,35 +174,35 @@ namespace ImageProcessorCore
             Point topLeft = new Point();
             Point bottomRight = new Point();
 
-            Func<ImageBase, int, int, float, bool> delegateFunc;
+            Func<PixelAccessor<TColor, TPacked>, int, int, float, bool> delegateFunc;
 
             // Determine which channel to check against
             switch (channel)
             {
                 case RgbaComponent.R:
-                    delegateFunc = (imageBase, x, y, b) => Math.Abs(imageBase[x, y].R - b) > Epsilon;
+                    delegateFunc = (pixels, x, y, b) => Math.Abs(pixels[x, y].ToVector4().X - b) > Epsilon;
                     break;
 
                 case RgbaComponent.G:
-                    delegateFunc = (imageBase, x, y, b) => Math.Abs(imageBase[x, y].G - b) > Epsilon;
+                    delegateFunc = (pixels, x, y, b) => Math.Abs(pixels[x, y].ToVector4().Y - b) > Epsilon;
                     break;
 
-                case RgbaComponent.A:
-                    delegateFunc = (imageBase, x, y, b) => Math.Abs(imageBase[x, y].A - b) > Epsilon;
+                case RgbaComponent.B:
+                    delegateFunc = (pixels, x, y, b) => Math.Abs(pixels[x, y].ToVector4().Z - b) > Epsilon;
                     break;
 
                 default:
-                    delegateFunc = (imageBase, x, y, b) => Math.Abs(imageBase[x, y].B - b) > Epsilon;
+                    delegateFunc = (pixels, x, y, b) => Math.Abs(pixels[x, y].ToVector4().W - b) > Epsilon;
                     break;
             }
 
-            Func<ImageBase, int> getMinY = imageBase =>
+            Func<PixelAccessor<TColor, TPacked>, int> getMinY = pixels =>
             {
                 for (int y = 0; y < height; y++)
                 {
                     for (int x = 0; x < width; x++)
                     {
-                        if (delegateFunc(imageBase, x, y, componentValue))
+                        if (delegateFunc(pixels, x, y, componentValue))
                         {
                             return y;
                         }
@@ -209,13 +212,13 @@ namespace ImageProcessorCore
                 return 0;
             };
 
-            Func<ImageBase, int> getMaxY = imageBase =>
+            Func<PixelAccessor<TColor, TPacked>, int> getMaxY = pixels =>
             {
                 for (int y = height - 1; y > -1; y--)
                 {
                     for (int x = 0; x < width; x++)
                     {
-                        if (delegateFunc(imageBase, x, y, componentValue))
+                        if (delegateFunc(pixels, x, y, componentValue))
                         {
                             return y;
                         }
@@ -225,13 +228,13 @@ namespace ImageProcessorCore
                 return height;
             };
 
-            Func<ImageBase, int> getMinX = imageBase =>
+            Func<PixelAccessor<TColor, TPacked>, int> getMinX = pixels =>
             {
                 for (int x = 0; x < width; x++)
                 {
                     for (int y = 0; y < height; y++)
                     {
-                        if (delegateFunc(imageBase, x, y, componentValue))
+                        if (delegateFunc(pixels, x, y, componentValue))
                         {
                             return x;
                         }
@@ -241,13 +244,13 @@ namespace ImageProcessorCore
                 return 0;
             };
 
-            Func<ImageBase, int> getMaxX = imageBase =>
+            Func<PixelAccessor<TColor, TPacked>, int> getMaxX = pixels =>
             {
                 for (int x = width - 1; x > -1; x--)
                 {
                     for (int y = 0; y < height; y++)
                     {
-                        if (delegateFunc(imageBase, x, y, componentValue))
+                        if (delegateFunc(pixels, x, y, componentValue))
                         {
                             return x;
                         }
@@ -257,10 +260,13 @@ namespace ImageProcessorCore
                 return height;
             };
 
-            topLeft.Y = getMinY(bitmap);
-            topLeft.X = getMinX(bitmap);
-            bottomRight.Y = (getMaxY(bitmap) + 1).Clamp(0, height);
-            bottomRight.X = (getMaxX(bitmap) + 1).Clamp(0, width);
+            using (PixelAccessor<TColor, TPacked> bitmapPixels = bitmap.Lock())
+            {
+                topLeft.Y = getMinY(bitmapPixels);
+                topLeft.X = getMinX(bitmapPixels);
+                bottomRight.Y = (getMaxY(bitmapPixels) + 1).Clamp(0, height);
+                bottomRight.X = (getMaxX(bitmapPixels) + 1).Clamp(0, width);
+            }
 
             return GetBoundingRectangle(topLeft, bottomRight);
         }
@@ -274,11 +280,11 @@ namespace ImageProcessorCore
         /// </returns>.
         private static float Clean(float x)
         {
-            const float Epsilon = .00001f;
+            const float Epsilon = .00001F;
 
             if (Math.Abs(x) < Epsilon)
             {
-                return 0f;
+                return 0F;
             }
 
             return x;

@@ -7,6 +7,7 @@ using System.Numerics;
 
 namespace ImageProcessorCore.Tests
 {
+    using System;
     using Xunit;
 
     /// <summary>
@@ -21,7 +22,7 @@ namespace ImageProcessorCore.Tests
         public void AreEqual()
         {
             Color color1 = new Color(0, 0, 0);
-            Color color2 = new Color(0, 0, 0, 1);
+            Color color2 = new Color(0, 0, 0, 1F);
             Color color3 = new Color("#000");
             Color color4 = new Color("#000000");
             Color color5 = new Color("#FF000000");
@@ -57,40 +58,34 @@ namespace ImageProcessorCore.Tests
         public void ConstructorAssignsProperties()
         {
             Color color1 = new Color(1, .1f, .133f, .864f);
-            Assert.Equal(1, color1.R, 1);
-            Assert.Equal(.1f, color1.G, 1);
-            Assert.Equal(.133f, color1.B, 3);
-            Assert.Equal(.864f, color1.A, 3);
+            Assert.Equal(255, color1.R);
+            Assert.Equal((byte)Math.Round(.1f * 255), color1.G);
+            Assert.Equal((byte)Math.Round(.133f * 255), color1.B);
+            Assert.Equal((byte)Math.Round(.864f * 255), color1.A);
 
             Color color2 = new Color(1, .1f, .133f);
-            Assert.Equal(1, color2.R, 1);
-            Assert.Equal(.1f, color2.G, 1);
-            Assert.Equal(.133f, color2.B, 3);
-            Assert.Equal(1, color2.A, 1);
+            Assert.Equal(255, color2.R);
+            Assert.Equal(Math.Round(.1f * 255), color2.G);
+            Assert.Equal(Math.Round(.133f * 255), color2.B);
+            Assert.Equal(255, color2.A);
 
             Color color3 = new Color("#FF0000");
-            Assert.Equal(1, color3.R, 1);
-            Assert.Equal(0, color3.G, 1);
-            Assert.Equal(0, color3.B, 3);
-            Assert.Equal(1, color3.A, 1);
+            Assert.Equal(255, color3.R);
+            Assert.Equal(0, color3.G);
+            Assert.Equal(0, color3.B);
+            Assert.Equal(255, color3.A);
 
             Color color4 = new Color(new Vector3(1, .1f, .133f));
-            Assert.Equal(1, color4.R, 1);
-            Assert.Equal(.1f, color4.G, 1);
-            Assert.Equal(.133f, color4.B, 3);
-            Assert.Equal(1, color4.A, 1);
+            Assert.Equal(255, color4.R);
+            Assert.Equal(Math.Round(.1f * 255), color4.G);
+            Assert.Equal(Math.Round(.133f * 255), color4.B);
+            Assert.Equal(255, color4.A);
 
-            Color color5 = new Color(new Vector3(1, .1f, .133f), .5f);
-            Assert.Equal(1, color5.R, 1);
-            Assert.Equal(.1f, color5.G, 1);
-            Assert.Equal(.133f, color5.B, 3);
-            Assert.Equal(.5f, color5.A, 1);
-
-            Color color6 = new Color(new Vector4(1, .1f, .133f, .5f));
-            Assert.Equal(1, color5.R, 1);
-            Assert.Equal(.1f, color6.G, 1);
-            Assert.Equal(.133f, color6.B, 3);
-            Assert.Equal(.5f, color6.A, 1);
+            Color color5 = new Color(new Vector4(1, .1f, .133f, .5f));
+            Assert.Equal(255, color5.R);
+            Assert.Equal(Math.Round(.1f * 255), color5.G);
+            Assert.Equal(Math.Round(.133f * 255), color5.B);
+            Assert.Equal(Math.Round(.5f * 255), color5.A);
         }
 
         /// <summary>
@@ -100,8 +95,8 @@ namespace ImageProcessorCore.Tests
         public void ConvertHex()
         {
             const string First = "FF000000";
-            Bgra32 bgra = new Color(0, 0, 0, 1);
-            string second = bgra.Bgra.ToString("X");
+            Color color = Color.Black;
+            string second = color.PackedValue.ToString("X");
             Assert.Equal(First, second);
         }
     }

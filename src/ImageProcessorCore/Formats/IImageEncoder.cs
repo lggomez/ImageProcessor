@@ -1,12 +1,7 @@
-﻿// --------------------------------------------------------------------------------------------------------------------
-// <copyright file="IImageEncoder.cs" company="James Jackson-South">
-//   Copyright (c) James Jackson-South and contributors.
-//   Licensed under the Apache License, Version 2.0.
+﻿// <copyright file="IImageEncoder.cs" company="James Jackson-South">
+// Copyright (c) James Jackson-South and contributors.
+// Licensed under the Apache License, Version 2.0.
 // </copyright>
-// <summary>
-//   Encapsulates properties and methods required for decoding an image to a stream.
-// </summary>
-// --------------------------------------------------------------------------------------------------------------------
 
 namespace ImageProcessorCore.Formats
 {
@@ -43,10 +38,14 @@ namespace ImageProcessorCore.Formats
         bool IsSupportedFileExtension(string extension);
 
         /// <summary>
-        /// Encodes the image to the specified stream from the <see cref="ImageBase"/>.
+        /// Encodes the image to the specified stream from the <see cref="Image{TColor, TPacked}"/>.
         /// </summary>
-        /// <param name="image">The <see cref="ImageBase"/> to encode from.</param>
+        /// <typeparam name="TColor">The pixel format.</typeparam>
+        /// <typeparam name="TPacked">The packed format. <example>uint, long, float.</example></typeparam>
+        /// <param name="image">The <see cref="Image{TColor, TPacked}"/> to encode from.</param>
         /// <param name="stream">The <see cref="Stream"/> to encode the image data to.</param>
-        void Encode(ImageBase image, Stream stream);
+        void Encode<TColor, TPacked>(Image<TColor, TPacked> image, Stream stream)
+            where TColor : IPackedVector<TPacked>
+            where TPacked : struct;
     }
 }
